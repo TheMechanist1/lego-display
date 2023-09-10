@@ -1,0 +1,242 @@
+import java.util.List;
+import java.util.Iterator;
+import android.view.*;
+import android.animation.*;
+import com.reveldigital.player.api.*;
+import android.util.Log;
+import android.os.Handler;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.content.Context;
+import android.widget.*;
+import android.util.Base64;
+import android.util.Log;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.lang.Math;
+
+
+android.widget.TextView totalView;
+totalView = new android.widget.TextView(Controller.getTemplate().getContext());
+totalView.setTextColor(android.graphics.Color.BLACK);
+totalView.setTextSize(40);
+AbsoluteLayout.LayoutParams params = new AbsoluteLayout.LayoutParams(1250, 350, 40, 40);
+Controller.getTemplate().addView(totalView, params);
+totalView.setText("testing");
+
+/* How everything is going to work in the big pictor
+
+the deivce is going to be idleing untill it get serial data. when ever the device receve data its called a hit
+
+the serial data is put in to vars to work with
+after that it check if the hand has hit a zone regin. if it hit a regon it will increase that zone hit counter
+if the a zone was hit repetely a number of times it will cas a trigger and send data through serial to controll 
+lights and then shows differnt stuff on the screen.*/
+
+// how long the item vid play for
+int vidTimeout = 20 * 1000;
+
+
+// how many serial update with hand in a zone to cause a trigger
+int hitTigger = 25;
+
+// trigger type, false is finger, true is hand
+boolean triggerType = false;
+
+// when false, will not count any hits
+boolean countHits = true;
+
+// when true, it will not play sound file agien
+boolean disTriggerHist = false;
+
+int countDownRate = 1; // how fast non trigger zone go down after a hit. set to above hitTrigger if you want them to all zone hit to go to 0
+
+//should use arrays instead
+// the total counts in a row a hand is pressent in a zone
+int zone1Hits = 0;
+int zone2Hits = 0;
+int zone3Hits = 0;
+int zone4Hits = 0;
+
+int personDisLast = 0;  
+int personDis = 0;
+// coords for zones. the area that the hand is in to have a hit
+// zone#Coord[](x1,x2,y1,y2)
+int[] zone1Coord = { 072 -50, 225, 333 -50, 433};       // batman
+int[] zone2Coord = { 161 -50, 311, 478 -50, 578};       // minecraft
+int[] zone3Coord = { 345 -50, 495, 436 -50, 536};       //caption amazica
+int[] zone4Coord = { 230 -50, 380, 255 -50, 355};       // lego city
+
+Controller.addTemplateListener(new TemplateListener() {
+    onInitialized() {
+        MacStatus.setText("Initialized Correctly");
+        /* [GENERATED] Hide f1Box from view */
+        f1Box.setVisibility(View.GONE);
+        f2Box.setVisibility(View.GONE);
+        f3Box.setVisibility(View.GONE);
+        f4Box.setVisibility(View.GONE);
+        f5Box.setVisibility(View.GONE);
+        /* [GENERATED] Make item1Zone visible */
+        item1Zone.setAutoStart(false);
+        item2Zone.setAutoStart(false);
+        item3Zone.setAutoStart(false);
+        item4Zone.setAutoStart(false);
+        personAudio.setAutoStart(false);
+
+        item1Zone.stop();
+        item2Zone.stop();
+        item3Zone.stop();
+        item4Zone.stop();
+        personAudio.stop();
+    }
+});
+
+// equals 0 when notinh is playing, bigger if item is playing
+int itemPlaying = 0;
+
+/*
+'1' - Turn ON light #1
+'2' - Turn ON light #2
+'3' - Turn ON light #3
+'4' - Turn ON light #4
+ 
+'5' - Turn OFF light #1
+'6' - Turn OFF light #2
+'7' - Turn OFF light #3
+'8' - Turn OFF light #4
+
+'9' -  Turn OFF all lights
+'0' -  Turn ON all lights
+*/
+// Seriall ------------------------------
+void updateLight(int light){
+
+    Controller.sendCommand("serial", "3" + light);
+}
+
+// timers ---------------------------------------------------------------------------------
+final Handler handler = new Handler();
+
+// reset sceen and lights when no data has came in
+final Runnable timeoutReset = new Runnable() {
+    public void run() {
+        updateLight(0);
+        item1Zone.stop();
+        item2Zone.stop();
+        item3Zone.stop();
+        item4Zone.stop();
+        zone1Hits = 0;
+        zone2Hits = 0;
+        zone3Hits = 0;
+        zone4Hits = 0;
+        countHits = true;
+        //              resetItems();
+    }
+};
+
+// functions ------------------------------------------------------------------------
+
+// strings to ints
+int getInt(String s){
+    return Integer.parseInt(s.replaceAll("[\\D]", ""));
+}
+// trigger functions-------
+
+void zone1Trigger(){        //zone 1 trigger function
+    updateLight(9);
+    updateLight(1);
+    countHits = false;
+    item1Zone.start();
+    handler.removeCallbacks(timeoutReset);
+    handler.postDelayed(timeoutReset, vidTimeout);
+}
+void zone2Trigger(){        //zone 2 trigger function
+    updateLight(9);
+    updateLight(2);
+    countHits = false;
+    item2Zone.start();
+    handler.removeCallbacks(timeoutReset);
+    handler.postDelayed(timeoutReset, vidTimeout);
+}
+void zone3Trigger(){        //zone 3 trigger function
+    updateLight(9);
+    updateLight(3);
+    countHits = false;
+    item3Zone.start();
+    handler.removeCallbacks(timeoutReset);
+    handler.postDelayed(timeoutReset, vidTimeout);
+}
+void zone4Trigger(){        //zone 4 trigger function
+    updateLight(9);
+    updateLight(4);
+    countHits = false;
+    item4Zone.start();
+    handler.removeCallbacks(timeoutReset);
+    handler.postDelayed(timeoutReset, vidTimeout);
+}
+
+// get the serial data for hands and stuff
+Controller.addOnCommandListener(new OnCommandListener() {
+    onCommand(String name, String value) {
+        Log.d(name, value);
+        if (name.equals("serial")) {
+
+            totalView.setText(value);   // diplay for debuging
+
+            if (value.startsWith("ID=")) {
+                switch (getInt(value)) {
+                    case 53:    // "display number 1"
+                        item2Zone.stop();
+                        item3Zone.stop();
+                        item4Zone.stop();
+                        zone1Trigger();
+                        break;
+                    case 54:    // "display number 2"
+                        item1Zone.stop();
+                        item3Zone.stop();
+                        item4Zone.stop();
+                        zone2Trigger();
+                        break;
+                    case 55:    // "display number 3"
+                        item1Zone.stop();
+                        item2Zone.stop();
+                        item4Zone.stop();
+                        zone3Trigger();
+                        break;
+                    case 56:    // "display number 4"
+                        item1Zone.stop();
+                        item2Zone.stop();
+                        item3Zone.stop();
+                        zone4Trigger();
+                        break;
+                }
+            } else if (value.endsWith("|43")) {      // distance sensor
+            if(((getInt(value) - 43 )/100) < 300){
+                personDisLast = personDis;      // update personDisLast
+                personDis = getInt(value);    // update personDis
+                personDis = personDis - 43;
+                personDis = personDis / 100;
+                if ((personDis < 100) && (personDisLast > 100) && (disTriggerHist == false)) {
+                    disTriggerHist = true;
+                    Controller.sendCommand("serial", "49"); // wake up voice shit
+                    // personAudio.start();
+                } 
+                if ((personDisLast > 130) && (personDis > 130)){
+                    disTriggerHist = false;
+                }
+            }
+            }
+        }
+    }
+});
+
+// stop audio when done
+personAudio.addPlaylistListener(new PlaylistListener() {
+    onSourceStarted(Source source) {
+    }
+    onSourceCompleted(Source source) {
+        personAudio.stop();
+    }
+});

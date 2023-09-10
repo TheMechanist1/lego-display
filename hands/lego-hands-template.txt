@@ -1,0 +1,821 @@
+import java.util.List;
+import java.util.Iterator;
+import android.view.*;
+import android.animation.*;
+import com.reveldigital.player.api.*;
+import android.util.Log;
+import android.os.Handler;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.content.Context;
+import android.widget.*;
+import android.util.Base64;
+import android.util.Log;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+android.widget.TextView totalView;
+totalView = new android.widget.TextView(Controller.getTemplate().getContext());
+totalView.setTextColor(android.graphics.Color.BLACK);
+totalView.setTextSize(60);
+AbsoluteLayout.LayoutParams params = new AbsoluteLayout.LayoutParams(1250, 350, 1200, 350); // was 1250, 350, 40, 350
+Controller.getTemplate().addView(totalView, params);
+totalView.setText("testing");
+
+/* How everything is going to work in the big pictor
+
+the deivce is going to be idleing untill it get serial data. when ever the device receve data its called a hit
+
+the serial data is put in to vars to work with
+after that it check if the hand has hit a zone regin. if it hit a regon it will increase that zone hit counter
+if the a zone was hit repetely a number of times it will cas a trigger and send data through serial to controll 
+lights and then shows differnt stuff on the screen.
+
+*/
+// how long the item vid play for
+int vidTimeout = 24 * 1000;
+
+int serialTimer = 2 * 1000;            // the time it takes for the serial to be instantiated /// changed from 10 to 6 to 5 to 2
+
+int camDelayTime = 3 * 1000;            // the time it takes for the camera to come up after serial event /// changed from 9 to 5 to 3
+
+int soundOffDelay = 9 * 1000;            // how long the sound plays when see hand /// changed 13 to 11 to 9
+
+// how many serial update with hand in a zone to cause a trigger. there are about 10 serial update per sec
+int hitTigger = 15;
+
+int handSizeTrigger = 10;           // the min size of the hand
+
+int personDis = 0;
+int personDisLast = 0;
+boolean personFound = false;
+int disTrigger = 190;
+int disTrigger2 = 200;
+
+
+// trigger type, false is finger, true is hand
+boolean triggerType = true;
+
+// when false, will not count any hits
+boolean countHits = true;
+
+int countDownRate = 1; // how fast non trigger zone go down after a hit. set to above hitTrigger if you want them to all zone hit to go to 0
+
+int serialCount = 0; // how many times the device has recieved a serial command
+
+boolean boxWait = true;
+
+// set all lights to be defualt on or off, true is all on, false is all off
+boolean lightsOn = true;
+
+// were the camera view in the template
+int camLeft = 119;
+int camTop = 594;
+
+//should use arrays instead
+// the total counts in a row a hand is pressent in a zone
+int zone1Hits = 0;
+int zone2Hits = 0;
+int zone3Hits = 0;
+int zone4Hits = 0;
+
+// coords for zones. the area that the hand is in to have a hit
+// zone#Coord[](x1,x2,y1,y2)
+//greater, less than, greater, less than
+//x,          x,        y,        y
+//0, 0          1200, 0
+//
+//0, 1200       1200, 1200
+
+//splitting the screen into 4 even zones
+int[] zone1Coord = {  1, 601, 2, 599};//20, 120, 100, 260};       // minecraft
+int[] zone2Coord = {  2, 599, 601, 1199};//90, 190, 320, 510};       // batman
+int[] zone3Coord = { 601, 1199, 599, 1200};//330, 430, 400, 580};       // caption amazica
+int[] zone4Coord = { 599, 1200, 1, 601};//260, 360,  30, 200};       // lego city
+
+
+
+
+
+
+Controller.addTemplateListener(new TemplateListener() {
+    onInitialized() {
+        MacStatus.setText("Initialized Correctly");
+        /* [GENERATED] Hide f1Box from view */
+        f1Box.setVisibility(View.GONE);
+        f2Box.setVisibility(View.GONE);
+        f3Box.setVisibility(View.GONE);
+        f4Box.setVisibility(View.GONE);
+        f5Box.setVisibility(View.GONE);
+        /* [GENERATED] Make item1Zone visible */
+        item1Zone.setAutoStart(false);
+        item2Zone.setAutoStart(false);
+        item3Zone.setAutoStart(false);
+        item4Zone.setAutoStart(false);
+
+        /* [GENERATED] Hide LegoBackGround from view */
+        LegoBackground1.setVisibility(View.GONE);
+
+
+        cameraSound.setAutoStart(false);
+        cameraSound.stop();
+        item1Zone.stop();
+        item2Zone.stop();
+        item3Zone.stop();
+        item4Zone.stop();
+
+        // hides the carma
+        //CameraView.setVisibility(View.GONE);
+        zoneBox1.setVisibility(View.GONE);
+        zoneBox2.setVisibility(View.GONE);
+        zoneBox3.setVisibility(View.GONE);
+        zoneBox4.setVisibility(View.GONE);
+        zoneBox1Green.setVisibility(View.GONE);
+        zoneBox2Green.setVisibility(View.GONE);
+        zoneBox3Green.setVisibility(View.GONE);
+        zoneBox4Green.setVisibility(View.GONE);
+        //showDebug.setVisibility(View.GONE);
+        hideDebug.setVisibility(View.GONE);
+        serialXY.setVisibility(View.GONE);
+        light1On.setVisibility(View.GONE);
+        light1Off.setVisibility(View.GONE);
+        light2On.setVisibility(View.GONE);
+        light2Off.setVisibility(View.GONE);
+        light3On.setVisibility(View.GONE);
+        light3Off.setVisibility(View.GONE);
+        light4On.setVisibility(View.GONE);
+        light4Off.setVisibility(View.GONE);
+
+    }
+});
+
+
+// equals 0 when nothing is playing, bigger if item is playing
+int itemPlaying = 0;
+
+
+
+// show/hide the camera view
+void showCam(boolean show){
+    if (show) {         // show the camera view
+        CameraView.animate().x(camLeft).y(camTop).setListener(new Animator.AnimatorListener() {
+            onAnimationCancel(Animator animation) {}
+            onAnimationEnd(Animator animation) {}
+            onAnimationRepeat(Animator animation) {}
+            onAnimationStart(Animator animation) {}
+        });
+    } else {        // hides the camera view
+        CameraView.animate().x(camLeft).y(2000).setListener(new Animator.AnimatorListener() {
+            onAnimationCancel(Animator animation) {}
+            onAnimationEnd(Animator animation) {}
+            onAnimationRepeat(Animator animation) {}
+            onAnimationStart(Animator animation) {}
+        });
+    }
+}
+
+// /* [GENERATED] Fade in animation for CameraView */
+// CameraView.animate().alpha(1).setListener(new Animator.AnimatorListener() {
+//     onAnimationCancel(Animator animation) {
+//     }
+//     onAnimationEnd(Animator animation) {
+//     }
+//     onAnimationRepeat(Animator animation) {
+//     }
+//     onAnimationStart(Animator animation) {
+//     }
+// });
+
+
+
+
+/*
+'1' - Turn ON light #1
+'2' - Turn ON light #2
+'3' - Turn ON light #3
+'4' - Turn ON light #4
+ 
+'5' - Turn OFF light #1
+'6' - Turn OFF light #2
+'7' - Turn OFF light #3
+'8' - Turn OFF light #4
+
+'9' -  Turn OFF all lights
+'0' -  Turn ON all lights
+*/
+// Seriall ------------------------------
+void updateLight(int light){
+    switch (light) {
+        case 0:
+            Controller.sendCommand("serial", "30");
+            break;
+        case 1:
+            Controller.sendCommand("serial", "31");
+            break;
+        case 2:
+            Controller.sendCommand("serial", "32");
+            break;
+        case 3:
+            Controller.sendCommand("serial", "33");
+            break;
+        case 4:
+            Controller.sendCommand("serial", "34");
+            break;
+        case 5:
+            Controller.sendCommand("serial", "35");
+            break;
+        case 6:
+            Controller.sendCommand("serial", "36");
+            break;
+        case 7:
+            Controller.sendCommand("serial", "37");
+            break;
+        case 8:
+            Controller.sendCommand("serial", "38");
+            break;
+        case 9:
+            Controller.sendCommand("serial", "39");
+            break;
+
+    }
+}
+
+
+// timers ---------------------------------------------------------------------------------
+final Handler handler = new Handler();
+
+// reset sceen and lights when no data has came in
+final Runnable timeoutReset = new Runnable() {
+    public void run() {
+        if (lightsOn) {
+            updateLight(0);
+        } else {
+            updateLight(9);
+        }
+        item1Zone.stop();
+        item2Zone.stop();
+        item3Zone.stop();
+        item4Zone.stop();
+        zone1Hits = 0;
+        zone2Hits = 0;
+        zone3Hits = 0;
+        zone4Hits = 0;
+        countHits = true;
+        /* [GENERATED] Make Media_Gallery_1 visible */
+        MediaGal.setVisibility(View.VISIBLE);
+        LegoBackground1.setVisibility(View.GONE);
+        if (personDis < 200 && personDis != 0) {
+            serialCount = 1;
+            boxWait = false;
+            LegoBackground1.setVisibility(View.VISIBLE);
+            /* [GENERATED] Make Media_Gallery_1 visible */
+            MediaGal.setVisibility(View.GONE);
+            showCam(true);
+            zoneBox1.setVisibility(View.VISIBLE);
+            zoneBox2.setVisibility(View.VISIBLE);
+            zoneBox3.setVisibility(View.VISIBLE);
+            zoneBox4.setVisibility(View.VISIBLE);
+        }
+    }
+};
+// handler.removeCallbacks(timeoutReset);
+// handler.postDelayed(timeoutReset, 20000);
+
+
+// reset data from serial 
+final Runnable timeoutSerial = new Runnable() {
+    public void run() {
+        // hides the camera
+
+        showCam(false);
+        //handler.removeCallbacks(camTrigger);
+        zoneBox1.setVisibility(View.GONE);
+        zoneBox2.setVisibility(View.GONE);
+        zoneBox3.setVisibility(View.GONE);
+        zoneBox4.setVisibility(View.GONE);
+        zoneBox1Green.setVisibility(View.GONE);
+        zoneBox2Green.setVisibility(View.GONE);
+        zoneBox3Green.setVisibility(View.GONE);
+        zoneBox4Green.setVisibility(View.GONE);
+
+        zone1Hits = 0;
+        zone2Hits = 0;
+        zone3Hits = 0;
+        zone4Hits = 0;
+
+        serialCount = 0;
+
+        boxWait = true;
+        LegoBackground1.setVisibility(View.GONE);
+        /* [GENERATED] Make Media_Gallery_1 visible */
+        MediaGal.setVisibility(View.VISIBLE);
+
+        cameraSound.stop();        // stop sound from playing
+    }
+};
+
+final Runnable camTrigger = new Runnable() {
+    public void run() {
+        // show the camera
+        showCam(true);
+        zoneBox1.setVisibility(View.VISIBLE);
+        zoneBox2.setVisibility(View.VISIBLE);
+        zoneBox3.setVisibility(View.VISIBLE);
+        zoneBox4.setVisibility(View.VISIBLE);
+        boxWait = false;
+    }
+};
+
+// handler.removeCallbacks(timeoutSerial);
+// handler.postDelayed(timeoutSerial, 60000);  
+
+// item timers, wait time to turn on lights and show item
+final Runnable soundOff = new Runnable() {
+    public void run() {
+        cameraSound.stop();
+    }
+};
+final Runnable item2Timer = new Runnable() {
+    public void run() {
+    }
+};
+final Runnable item3Timer = new Runnable() {
+    public void run() {
+    }
+};
+final Runnable item4Timer = new Runnable() {
+    public void run() {
+    }
+};
+// handler.removeCallbacks(item1Timer);
+// handler.postDelayed(item1Timer, 60000);  
+
+// functions ------------------------------------------------------------------------
+
+//void handTrigger
+
+
+
+// strings to ints
+int getInt(String s){
+    return Integer.parseInt(s.replaceAll("[\\D]", ""));
+}
+// trigger functions-------
+
+void zone1Trigger(){        //zone 1 trigger function
+    handler.removeCallbacks(timeoutSerial);
+    handler.post(timeoutSerial);
+    updateLight(9);
+
+    updateLight(1);
+    countHits = false;
+    item1Zone.start();
+    handler.removeCallbacks(timeoutReset);
+    handler.postDelayed(timeoutReset, vidTimeout);
+}
+void zone2Trigger(){        //zone 2 trigger function
+    handler.removeCallbacks(timeoutSerial);
+    handler.post(timeoutSerial);
+    updateLight(9);
+    updateLight(2);
+    countHits = false;
+    item2Zone.start();
+    handler.removeCallbacks(timeoutReset);
+    handler.postDelayed(timeoutReset, vidTimeout);
+}
+void zone3Trigger(){        //zone 3 trigger function
+    handler.removeCallbacks(timeoutSerial);
+    handler.post(timeoutSerial);
+    updateLight(9);
+
+    updateLight(3);
+    countHits = false;
+    item3Zone.start();
+    handler.removeCallbacks(timeoutReset);
+    handler.postDelayed(timeoutReset, vidTimeout);
+}
+void zone4Trigger(){        //zone 4 trigger function
+    handler.removeCallbacks(timeoutSerial);
+    handler.post(timeoutSerial);
+    updateLight(9);
+
+    updateLight(4);
+    countHits = false;
+    item4Zone.start();
+    handler.removeCallbacks(timeoutReset);
+    handler.postDelayed(timeoutReset, vidTimeout);
+}
+
+// function ran to update the counter on the zone hits and check if any has reach a trigger point
+void zoneHitUpdater(int zone){
+    //clear all zonehit and increase the counter by 1 for the zone that was hit
+    switch (zone) {
+        case 0:
+            zone1Hits = zone1Hits - countDownRate;
+            zone2Hits = zone2Hits - countDownRate;
+            zone3Hits = zone3Hits - countDownRate;
+            zone4Hits = zone4Hits - countDownRate;
+            if (zone1Hits < 0) { zone1Hits = 0; }
+            if (zone2Hits < 0) { zone2Hits = 0; }
+            if (zone3Hits < 0) { zone3Hits = 0; }
+            if (zone4Hits < 0) { zone4Hits = 0; }
+            break;
+        case 1:
+            //zone1Hits = zone1Hits - countDownRate;
+            zone2Hits = zone2Hits - countDownRate;
+            zone3Hits = zone3Hits - countDownRate;
+            zone4Hits = zone4Hits - countDownRate;
+            //if (zone1Hits < 0) { zone1Hits = 0; }
+            if (zone2Hits < 0) { zone2Hits = 0; }
+            if (zone3Hits < 0) { zone3Hits = 0; }
+            if (zone4Hits < 0) { zone4Hits = 0; }
+
+            zone1Hits = zone1Hits + 1;      // upadte hit counter for the zone that was hit
+            if (zone1Hits >= hitTigger) {   // check to see if the zonehit reach a throehold to cause a trigger
+                zone1Hits = 0;
+                zone1Trigger();
+            }
+            break;
+
+        case 2:
+            zone1Hits = zone1Hits - countDownRate;
+            // zone2Hits = zone2Hits - countDownRate;
+            zone3Hits = zone3Hits - countDownRate;
+            zone4Hits = zone4Hits - countDownRate;
+            if (zone1Hits < 0) { zone1Hits = 0; }
+            //if (zone2Hits < 0) { zone2Hits = 0; }
+            if (zone3Hits < 0) { zone3Hits = 0; }
+            if (zone4Hits < 0) { zone4Hits = 0; }
+
+            //zone1Hits = 0;
+            zone2Hits = zone2Hits + 1;
+            // zone3Hits = 0;
+            // zone4Hits = 0;
+            if (zone2Hits >= hitTigger) {
+                zone2Hits = 0;
+                zone2Trigger();
+            }
+            break;
+
+        case 3:
+            zone1Hits = zone1Hits - countDownRate;
+            zone2Hits = zone2Hits - countDownRate;
+            //zone3Hits = zone3Hits - countDownRate;
+            zone4Hits = zone4Hits - countDownRate;
+            if (zone1Hits < 0) { zone1Hits = 0; }
+            if (zone2Hits < 0) { zone2Hits = 0; }
+            //if (zone3Hits < 0) { zone3Hits = 0; }
+            if (zone4Hits < 0) { zone4Hits = 0; }
+
+            // zone1Hits = 0;
+            // zone2Hits = 0;
+            zone3Hits = zone3Hits + 1;
+            // zone4Hits = 0;
+            if (zone3Hits >= hitTigger) {
+                zone3Hits = 0;
+                zone3Trigger();
+            }
+            break;
+
+        case 4:
+            zone1Hits = zone1Hits - countDownRate;
+            zone2Hits = zone2Hits - countDownRate;
+            zone3Hits = zone3Hits - countDownRate;
+            //zone4Hits = zone4Hits - countDownRate;
+            if (zone1Hits < 0) { zone1Hits = 0; }
+            if (zone2Hits < 0) { zone2Hits = 0; }
+            if (zone3Hits < 0) { zone3Hits = 0; }
+            //    if(zone4Hits < 0){zone4Hits = 0;}
+
+            // zone1Hits = 0;
+            // zone2Hits = 0;
+            // zone3Hits = 0;
+            zone4Hits = zone4Hits + 1;
+            if (zone4Hits >= hitTigger) {
+                zone4Hits = 0;
+                zone4Trigger();
+            }
+            break;
+
+    }
+
+}
+
+// zone hit checker, see if a zone was hit. return the zone that was hit. 0 means no zone hit
+int zoneHitCheck(xCoord, yCoord, quad){
+    int zone = 0;
+    if (xCoord >= zone1Coord[0] && xCoord <= zone1Coord[1] && yCoord >= zone1Coord[2] && yCoord <= zone1Coord[3]) {
+        zone = 1;
+    }
+
+    if (xCoord >= zone2Coord[0] && xCoord <= zone2Coord[1] && yCoord >= zone2Coord[2] && yCoord <= zone2Coord[3]) {
+        zone = 2;
+    }
+
+    if (xCoord >= zone3Coord[0] && xCoord <= zone3Coord[1] && yCoord >= zone3Coord[2] && yCoord <= zone3Coord[3]) {
+        zone = 3;
+    }
+
+    if (xCoord >= zone4Coord[0] && xCoord <= zone4Coord[1] && yCoord >= zone4Coord[2] && yCoord <= zone4Coord[3]) {
+        zone = 4;
+    }
+    return zone;
+}
+
+
+// get the serial data from device
+Controller.addOnCommandListener(new OnCommandListener() {
+    onCommand(String name, String value) {
+        Log.d(name, value);
+        if (name.equals("serial")) {
+            Pattern GestureCapturePattern = Pattern.compile("^gesture\\|(\\d{1,4})\\|(\\d{1,4})\\|(\\d{1,4})\\|(\\d{1,4})\\|(\\d{1,4})\\|(\\d{1})\\|(\\d{1})\\|(\\d{1})\\|(\\d{1})\\|(True|False)\\|(\\S{1,4})$");
+            Pattern disPattern = Pattern.compile("(\\d{1,3})(\\S{3})$");
+            if (value != null && value.matches(GestureCapturePattern.pattern())) {
+                Log.d("match", "matches");
+                Matcher matcher = GestureCapturePattern.matcher(value);
+                if (matcher.find()) {
+                    // assign data from the match pattern to vars
+                    String quadrantZone = matcher.group(1);
+                    String handXCoord = matcher.group(2);
+                    String handYCoord = matcher.group(3);
+                    String cameraResWidth = matcher.group(4);
+                    String cameraResHeight = matcher.group(5);
+                    String indexR = matcher.group(6);
+                    String middleR = matcher.group(7);
+                    String ringR = matcher.group(8);
+                    String pinkyR = matcher.group(9);
+                    String thumb = matcher.group(10);
+                    String handSize = matcher.group(11);
+
+                    serialXY.setText(handXCoord + ", " + handYCoord);
+
+
+
+                    // update finger boxes on the display. used fro testing
+                    int figerNum = 0;
+                    if (indexR.equals("1")) {
+                        figerNum++;
+                        f1Box.setVisibility(View.VISIBLE);
+                    } else {
+                        f1Box.setVisibility(View.GONE);
+                    }
+
+                    if (middleR.equals("1")) {
+                        figerNum++;
+                        f2Box.setVisibility(View.VISIBLE);
+                    } else {
+                        f2Box.setVisibility(View.GONE);
+                    }
+
+                    if (ringR.equals("1")) {
+                        figerNum++;
+                        f3Box.setVisibility(View.VISIBLE);
+                    } else {
+                        f3Box.setVisibility(View.GONE);
+                    }
+
+                    if (pinkyR.equals("1")) {
+                        figerNum++;
+                        f4Box.setVisibility(View.VISIBLE);
+                    } else {
+                        f4Box.setVisibility(View.GONE);
+                    }
+
+                    if (thumb.equals("True")) {
+                        //figerNum++;
+                        f5Box.setVisibility(View.VISIBLE);
+                    } else {
+                        f5Box.setVisibility(View.GONE);
+                    }
+
+
+                    // end of finger, test, updater, box thing
+
+                    // turn var from strings to ints
+                    int handXCoordInt = getInt(handXCoord);
+                    int handYCoordInt = getInt(handYCoord);
+                    int quadrantZoneInt = getInt(quadrantZone);
+                    int handSizeInt = getInt(handSize);
+
+                    int zone = 0;
+
+                    if (handSizeInt >= handSizeTrigger && personDis < disTrigger) {
+                        // serial time out
+                        handler.removeCallbacks(timeoutSerial);
+                        handler.postDelayed(timeoutSerial, serialTimer);
+                        if (countHits) {
+                            if (triggerType) {
+                                // showCam(true);
+                                // delay show camera
+                                if (serialCount == 0 && personDis == 0) {
+
+                                    handler.removeCallbacks(camTrigger);
+                                    handler.postDelayed(camTrigger, camDelayTime);
+                                    handler.removeCallbacks(soundOff);
+                                    handler.postDelayed(soundOff, soundOffDelay);
+                                    cameraSound.start();
+                                    LegoBackground1.setVisibility(View.VISIBLE);
+                                    MediaGal.setVisibility(View.GONE);
+                                }
+
+                                serialCount = serialCount + 1;      // how many time the device has resave a serial command sence it saw the hand
+                                if (boxWait == false) {
+                                    zone = zoneHitCheck(handXCoordInt, handYCoordInt, quadrantZoneInt);     // check to see is hand is in hit zone
+                                }
+
+                                if (zone == 1) {
+                                    zoneBox1Green.setVisibility(View.VISIBLE);
+                                    zoneBox2Green.setVisibility(View.GONE);
+                                    zoneBox3Green.setVisibility(View.GONE);
+                                    zoneBox4Green.setVisibility(View.GONE);
+                                } else if (zone == 2) {
+                                    zoneBox1Green.setVisibility(View.GONE);
+                                    zoneBox2Green.setVisibility(View.VISIBLE);
+                                    zoneBox3Green.setVisibility(View.GONE);
+                                    zoneBox4Green.setVisibility(View.GONE);
+                                } else if (zone == 3) {
+                                    zoneBox1Green.setVisibility(View.GONE);
+                                    zoneBox2Green.setVisibility(View.GONE);
+                                    zoneBox3Green.setVisibility(View.VISIBLE);
+                                    zoneBox4Green.setVisibility(View.GONE);
+                                } else if (zone == 4) {
+                                    zoneBox1Green.setVisibility(View.GONE);
+                                    zoneBox2Green.setVisibility(View.GONE);
+                                    zoneBox3Green.setVisibility(View.GONE);
+                                    zoneBox4Green.setVisibility(View.VISIBLE);
+                                } else {
+                                    zoneBox1Green.setVisibility(View.GONE);
+                                    zoneBox2Green.setVisibility(View.GONE);
+                                    zoneBox3Green.setVisibility(View.GONE);
+                                    zoneBox4Green.setVisibility(View.GONE);
+                                }
+
+                                zoneHitUpdater(zone);         // location of hand pick zone
+                            } else {
+                                zoneHitUpdater(figerNum);       // number of fingers pick zone
+                            }
+                        }
+                    }
+                    // int zone = zoneHitCheck(handXCoordInt, handYCoordInt, quadrantZoneInt);
+                    // zoneHitUpdater(figerNum);       // number of fingers pick zone
+                    // //zoneHitUpdater(zone);         // location of hand pick zone
+                    handloc.setText("Groups assigned");
+                    totalView.setText(quadrantZone + " " + handXCoord + " " + handYCoord + " " + cameraResWidth + " " + cameraResHeight
+                        //+ " " + indexR + " " + middleR + " " + ringR + " " + pinkyR + " " + thumb + " " + figerNum 
+                        + "\n" + zone + " " + zone1Hits + " " + zone2Hits + " " + zone3Hits + " " + zone4Hits + " " + handSize);
+                }
+            } else if (value != null && value.matches(disPattern.pattern())) {
+                //text9.setText(value);
+                personDisLast = personDis;      // update personDisLast
+                personDis = getInt(value);    // update personDis
+                personDis = personDis - 43;
+                personDis = personDis / 100;
+                //text9.setText(" " + personDis);
+                if (personDis > disTrigger && serialCount == 1) {
+                    // I hope this fix the template breaking when there is a quick trigger on the dis sensor
+                    handler.removeCallbacks(timeoutSerial);
+                    handler.postDelayed(timeoutSerial, serialTimer);
+                    handler.removeCallbacks(camTrigger);
+                    handler.removeCallbacks(soundOff);
+                    handler.postDelayed(soundOff, soundOffDelay);
+                    serialCount = 0;
+
+
+                } else if (personDis < disTrigger && personDis > 1) {
+                    serialCount = 1;
+                    handler.removeCallbacks(timeoutSerial);
+                    handler.postDelayed(timeoutSerial, serialTimer);
+                    if (personDisLast > disTrigger && countHits) {
+                        handler.removeCallbacks(camTrigger);
+                        handler.postDelayed(camTrigger, camDelayTime);
+                        handler.removeCallbacks(soundOff);
+                        handler.postDelayed(soundOff, soundOffDelay);
+                        cameraSound.start();
+                        LegoBackground1.setVisibility(View.VISIBLE);
+                        MediaGal.setVisibility(View.GONE);
+                        serialCount = 1;
+                    }
+                }
+            }
+        }
+    }
+});
+                    /*
+'1' - Turn ON light #1
+'2' - Turn ON light #2
+'3' - Turn ON light #3
+'4' - Turn ON light #4
+
+'5' - Turn OFF light #1
+'6' - Turn OFF light #2
+'7' - Turn OFF light #3
+'8' - Turn OFF light #4
+
+'9' -  Turn OFF all lights
+'0' -  Turn ON all lights
+*/
+light1On.setOnClickListener(new View.OnClickListener() {
+    onClick(View v) {
+        updateLight(1);
+    }
+});
+light1Off.setOnClickListener(new View.OnClickListener() {
+    onClick(View v) {
+        updateLight(5);
+    }
+});
+light2On.setOnClickListener(new View.OnClickListener() {
+    onClick(View v) {
+        updateLight(2);
+    }
+});
+light2Off.setOnClickListener(new View.OnClickListener() {
+    onClick(View v) {
+        updateLight(6);
+    }
+});
+light3On.setOnClickListener(new View.OnClickListener() {
+    onClick(View v) {
+        updateLight(3);
+    }
+});
+light3Off.setOnClickListener(new View.OnClickListener() {
+    onClick(View v) {
+        updateLight(7);
+    }
+});
+light4On.setOnClickListener(new View.OnClickListener() {
+    onClick(View v) {
+        updateLight(4);
+    }
+});
+light4Off.setOnClickListener(new View.OnClickListener() {
+    onClick(View v) {
+        updateLight(8);
+    }
+});
+
+
+// android.widget.TextView serialXY;
+// serialXY = new android.widget.TextView(Controller.getTemplate().getContext());
+// serialXY.setTextColor(android.graphics.Color.BLACK);
+// serialXY.setTextSize(60);
+// AbsoluteLayout.LayoutParams params = new AbsoluteLayout.LayoutParams(14, 1750, 830, 1900); // was 1250, 350, 40, 350
+// Controller.getTemplate().addView(serialXY, params);
+// serialXY.setText(handXCoord + ", " + handYCoord);
+
+showDebug.setOnClickListener(new View.OnClickListener() {
+    onClick(View v) {
+        countHits = false;
+        hideDebug.setVisibility(View.VISIBLE);
+        serialXY.setVisibility(View.VISIBLE);
+        light1On.setVisibility(View.VISIBLE);
+        light1Off.setVisibility(View.VISIBLE);
+        light2On.setVisibility(View.VISIBLE);
+        light2Off.setVisibility(View.VISIBLE);
+        light3On.setVisibility(View.VISIBLE);
+        light3Off.setVisibility(View.VISIBLE);
+        light4On.setVisibility(View.VISIBLE);
+        light4Off.setVisibility(View.VISIBLE);
+        MediaGal.setVisibility(View.GONE);
+        LegoBackground1.setVisibility(View.GONE);
+        showCam(true);
+        zoneBox1.setVisibility(View.GONE);
+        zoneBox2.setVisibility(View.GONE);
+        zoneBox3.setVisibility(View.GONE);
+        zoneBox4.setVisibility(View.GONE);
+        zoneBox1Green.setVisibility(View.GONE);
+        zoneBox2Green.setVisibility(View.GONE);
+        zoneBox3Green.setVisibility(View.GONE);
+        zoneBox4Green.setVisibility(View.GONE);
+
+    }
+});
+
+hideDebug.setOnClickListener(new View.OnClickListener() {
+    onClick(View v) {
+        hideDebug.setVisibility(View.GONE);
+        serialXY.setVisibility(View.GONE);
+        light1On.setVisibility(View.GONE);
+        light1Off.setVisibility(View.GONE);
+        light2On.setVisibility(View.GONE);
+        light2Off.setVisibility(View.GONE);
+        light3On.setVisibility(View.GONE);
+        light3Off.setVisibility(View.GONE);
+        light4On.setVisibility(View.GONE);
+        light4Off.setVisibility(View.GONE);
+        showCam(false);
+        LegoBackground1.setVisibility(GONE);
+        MediaGal.setVisibility(View.VISIBLE);
+        updateLight(0);
+        countHits = true;
+    }
+});
+
+// do on startup
+//CameraView.setLeft(1200);
+showCam(false);
+
+updateLight(0);
